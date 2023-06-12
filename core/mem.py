@@ -22,8 +22,8 @@ class Memeory(QObject):
         self.bitmap: list[bitarray] = []
         # 假设第0块是存各种信息的索引块吧，然后位视图从第1块开始，索引从第2块开始
         self.infoMap = {
-            "bitmap": 1,
-            "index": 2,
+            "bitmap": 0,
+            "index": 1,
         }
         self.occupyBlock = 0
         if isFile:
@@ -31,7 +31,7 @@ class Memeory(QObject):
         else:
             self._creatNewMem()
 
-    def _creatNewMem(self, file: str) -> None:
+    def _creatNewMem(self) -> None:
         for i in range(self.config.BLOCK_NUM):
             # 使用字节数组
             self.memory.append(bytearray(self.config.BLOCK_SIZE))
@@ -41,15 +41,17 @@ class Memeory(QObject):
         self.bitmap.setall(False)
         self.bitmap[0] = True
         self.inMem(bytearray(self.bitmap.tobytes()), self.infoMap["bitmap"])
+        # 占位
+        self.inMem(bytearray(0), self.infoMap["index"])
 
     def inMem(self, data: bytearray, blockNo: int = None) -> int:
         # 分解
-        datas = [
-            data[i : i + self.config.BLOCK_SIZE - 2 * sys.getsizeof(int)]
-            for i in range(
-                0, len(data), self.config.BLOCK_SIZE - 2 * sys.getsizeof(int)
-            )
-        ]
+        datas = []
+        length = self.config.BLOCK_SIZE - BACK_NUM
+        for i in range(0, len(data), length):
+            temp = data[i : i + length]
+            temp.extend((-1).to_bytes(INT_NUM, byteorder="little", signed=True))
+            datas.append(temp)
         # 写入
         if blockNo is None:
             # 从位视图中找到空闲块
@@ -70,12 +72,14 @@ class Memeory(QObject):
             if i != len(data) - 1:
                 index = self.bitmap.index(False)
                 self.bitmap[index] = True
-            data[i].extend(
-                (index).to_bytes(sys.getsizeof(int), byteorder="little", signed=True)
+            self.memory[blockNo][: len(data[i])] = data[i]
+            self.memory[blockNo][-4:] = (index).to_bytes(
+                INT_NUM, byteorder="little", signed=True
             )
-            self.memory[blockNo] = data[i]
             blockNo = index
-        self.memory[blockNo][-4:] = (-1).to_bytes()
+        self.memory[blockNo][-4:] = (-1).to_bytes(
+            INT_NUM, byteorder="little", signed=True
+        )
         return True
 
     def checkMemBlock(self, size: int) -> bool:
@@ -91,18 +95,23 @@ class Memeory(QObject):
     def cancelOccupy(self, blockNum: int) -> None:
         self.occupyBlock -= blockNum
 
-    def deleteMem(self, blockNo: int) -> bool:
+    def deleteMem(self, blockNo: int) -> None:
+        if blockNo == None:
+            return
         # 直接标记为可用
         self.bitmap[blockNo] = False
-        while int(self.memory[blockNo][-4:], 2) != -1:
-            blockNo = int(self.memory[blockNo][-4:], 2)
+        address = int.from_bytes(
+            self.memory[blockNo][-INT_NUM:], byteorder="little", signed=True
+        )
+        while address != -1:
+            address = int.from_bytes(
+                self.memory[blockNo][-INT_NUM:], byteorder="little", signed=True
+            )
             self.bitmap[blockNo] = False
 
     def changeMem(self, data: bytearray, blockNo: int) -> int:
         filesize = self.getFileSize(blockNo)
-        num = self.getBlockNum(data) - filesize // (
-            self.config.BLOCK_SIZE - 2 * sys.getsizeof(int)
-        )
+        num = self.getBlockNum(data) - filesize // (self.config.BLOCK_SIZE - BACK_NUM)
         if num > 0:
             if not self.checkMemBlock(num):
                 return False
@@ -111,16 +120,30 @@ class Memeory(QObject):
         return True
 
     def getBlockNum(self, data: bytearray) -> int:
-        return len(data) // (self.config.BLOCK_SIZE - 2 * sys.getsizeof(int))
+        return len(data) // (self.config.BLOCK_SIZE - BACK_NUM)
 
     def getFileSize(self, blockNo: int) -> int:
         size = 0
-        size += self.config.BLOCK_SIZE - 2 * sys.getsizeof(int)
+        size += self.config.BLOCK_SIZE - BACK_NUM
         blockNo = int(self.memory[blockNo][-4:], 2)
         while blockNo != -1:
-            size += self.config.BLOCK_SIZE - 2 * sys.getsizeof(int)
+            size += self.config.BLOCK_SIZE - BACK_NUM
             blockNo = int(self.memory[blockNo][-4:], 2)
         return size
+
+    def getData(self, blockNo: int) -> bytearray:
+        data = bytearray()
+        if EOF in self.memory[blockNo]:
+            data.extend(self.memory[blockNo][: self.memory[blockNo].index(EOF)])
+        blockNo = int.from_bytes(
+            self.memory[blockNo][-INT_NUM:], byteorder="little", signed=True
+        )
+        while blockNo != -1:
+            data.extend(self.memory[blockNo][: self.memory[blockNo].index(EOF)])
+            blockNo = int.from_bytes(
+                self.memory[blockNo][-INT_NUM:], byteorder="little", signed=True
+            )
+        return data
 
 
 class MemController(QObject):
@@ -129,11 +152,13 @@ class MemController(QObject):
     """
 
     noEnoughSignal = pyqtSignal()
+    addDirSignal = pyqtSignal(str)
 
     def __init__(self, config: Config) -> None:
         self.config = config
         self.index = None
-        self.indexs: list[Union[FileAssets, DIRAssets]] = []
+        self.root = None
+        self.indexs: list[Index] = []
         self.indexNum = 0
         self.indexSize1 = 0
         self.indexSize2 = 0
@@ -142,82 +167,105 @@ class MemController(QObject):
             self.mem = Memeory(self.config, True)
         else:
             self.mem = Memeory(self.config, False)
-            self.addDir(None, ".")
+            self.addIndex(None, ".", IndexType.DIR)
+
         # 读取内存中的位图
         # 读取内存中的索引表
 
-    def getRoot(self) -> IndexTreeNode:
-        return self.index
+    def getRoot(self) -> MyNode:
+        return self.root
 
-    def addFile(self, ini: IndexTreeNode, file: File) -> None:
-        no = self.mem.inMem(bytearray(file.getContent().encode("utf-8")))
-        if no is None:
-            self.noEnoughSignal.emit()
-            return
-        self.indexs.append(FileAssets(len(file.getContent().encode("utf-8")), no))
-        index = IndexTreeNode(Index(file.getName(), self.indexNum, IndexType.FILE))
+    def addFile(self, ini: MyNode, filename: str = "新建文件") -> str:
+        i = 1
+        name = filename
+        while True and ini:
+            name = filename if i == 1 else f"{filename}{i}"
+            if not ini.hasChildName(name):
+                break
+            i += 1
+        index = Index(name, self.indexNum, IndexType.FILE)
+        self.indexs.append(index)
+        node = MyNode(index, ini)
         self.indexNum += 1
-        ini.extendchild(index)
-        if not self._checkIndexSize():
-            self.mem.deleteMem(no)
+        if not self.checkIndexSize():
             self.indexs.pop()
             self.indexNum -= 1
-            ini.removeChild(index)
             self.noEnoughSignal.emit()
+            return None
+        else:
+            if ini is not None:
+                ini.appendChild(node)
+            else:
+                self.root = node
+            return name
 
-    def addDir(self, ini: IndexTreeNode, dirName: str) -> None:
-        self.indexs.append(DIRAssets(dirName))
-        index = IndexTreeNode(Index(dirName, self.indexNum, IndexType.DIR))
+    def addIndex(self, ini: MyNode, name0: str, type: IndexType) -> str:
+        name = None
+        if name0 == None:
+            if type == IndexType.FILE:
+                name = "新建文件"
+            elif type == IndexType.DIR:
+                name = "新建文件夹"
+            name0 = name
+        i = 1
+        name = name0
+        while True and ini:
+            name = name0 if i == 1 else f"{name0}{i}"
+            if not ini.hasChildName(name):
+                break
+            i += 1
+        index = Index(name, self.indexNum, type)
+        self.indexs.append(index)
+        node = MyNode(index, ini)
         self.indexNum += 1
-        if ini is None:
-            ini.extendchild(index)
-        if not self._checkIndexSize():
+        if not self.checkIndexSize():
             self.indexs.pop()
             self.indexNum -= 1
-            ini.removeChild(index)
             self.noEnoughSignal.emit()
+            return None
+        else:
+            if ini is not None:
+                ini.appendChild(node)
+            else:
+                self.root = node
+            return name
 
-    def _checkIndexSize(self) -> None:
-        byte_count1 = len(indexTreeSerialize(self.index).encode("utf-8"))
-        byte_count2 = len(json.dumps(self.indexs).encode("utf-8"))
-        no1 = False
-        if (
-            byte_count1
-            > self.indexSize1
-            * (self.config.BLOCK_SIZE - 2 * sys.getsizeof(int))
-            * self.config.BLOCK_NUM
-        ):
-            if self.mem.occupy(1):
-                self.indexSize1 += 1
+    def deleteNode(self, faNode: MyNode, node: MyNode) -> None:
+        if node in faNode.children:
+            faNode.children.remove(node)
+            self.indexs.remove(node.index)
+            if node.index.type == IndexType.DIR:
+                pass
+                for child in node.children:
+                    self.deleteNode(node, child)
             else:
-                self.noEnoughSignal.emit()
-        if (
-            byte_count2
-            > self.indexSize2
-            * (self.config.BLOCK_SIZE - 2 * sys.getsizeof(int))
-            * self.config.BLOCK_NUM
+                self.mem.deleteMem(node.index.blockNo)
+
+    def checkIndexSize(self) -> bool:
+        if self.mem.checkMemBlock(1):
+            return True
+        else:
+            return False
+
+    def readFile(self, index: int) -> str:
+        return self.mem.getData(index.blockNo).decode("utf-8")
+
+    def writeFile(self, index, content: str, time: str) -> bool:
+        if not self.checkIndexSize():
+            self.noEnoughSignal.emit()
+            return False
+        if not self.mem.checkMemBlock(
+            1 + self.mem.getBlockNum(bytearray(content.encode("utf-8")))
         ):
-            if self.mem.occupy(1):
-                self.indexSize2 += 1
-            else:
-                if no1:
-                    self.mem.cancelOccupy(1)
-                    self.indexSize1 -= 1
-                self.noEnoughSignal.emit()
-        if (
-            byte_count1
-            <= (self.indexSize1 - 1)
-            * (self.config.BLOCK_SIZE - 2 * sys.getsizeof(int))
-            * self.config.BLOCK_NUM
-        ):
-            self.mem.cancelOccupy(1)
-        if (
-            byte_count2
-            <= (self.indexSize2 - 1)
-            * (self.config.BLOCK_SIZE - 2 * sys.getsizeof(int))
-            * self.config.BLOCK_NUM
-        ):
-            self.mem.cancelOccupy(1)
+            self.noEnoughSignal.emit()
+            return False
+        if index.blockNo is not None:
+            self.mem.deleteMem(index.blockNo)
+        no = self.mem.inMem(bytearray(content.encode("utf-8")))
+        index.blockNo = no
+        index.size = len(content.encode("utf-8"))
+        index.modifyTime = time
+        return True
 
     def indexIn(self):
         self.mem.cancelOccupy(self.indexSize1 + self.indexSize2)
@@ -225,3 +273,6 @@ class MemController(QObject):
             bytearray(indexTreeSerialize(self.index).encode("utf-8"))
         ):
             self.noEnoughSignal.emit()
+
+    def getModel(self) -> MyModel:
+        return MyModel(self.root)

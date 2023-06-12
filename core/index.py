@@ -1,6 +1,7 @@
 import json
 from enum import *
 from typing import *
+from PyQt6.QtCore import *
 
 
 class IndexType(Enum):
@@ -21,117 +22,115 @@ class Index:
         self.index = index
         self.name = name
         self.type = type
-
-    def getIndex(self):
-        return self.index
-
-    def getName(self):
-        return self.name
-
-    def getType(self):
-        return self.type
-
-
-class FileAssets:
-    """
-    文件资产
-    """
-
-    def __init__(self, size: int, blockNo: int):
-        self.createTime = None
         self.modifyTime = None
-        self.size = size
-        self.blockNo = blockNo
-        self.setChangeFile()
-
-    def getCreateTime(self):
-        return self.createTime
-
-    def getModifyTime(self):
-        return self.modifyTime
-
-    def getSize(self):
-        return self.size
-
-    def getBlockNo(self):
-        return self.blockNo
-
-    def setChangeFile(self):
-        # 自动计算？
-        pass
-
-
-class DIRAssets:
-    """
-    目录资产
-    """
-
-    def __init__(self, name: str):
-        self.createTime = None
         self.size = None
-        self.includes = [0] * 2
-
-    def getCreateTime(self):
-        return self.createTime
-
-    def getSize(self):
-        return self.size
-
-    def setChangeFile(self):
-        # 自动计算？
-        pass
+        self.blockNo = None
 
 
-class IndexTreeNode:
-    """
-    文件树节点
-    """
-
-    def __init__(self, val: Index, parent=None):
-        self.val = val
+class MyNode:
+    def __init__(self, index: Index, parent=None):
+        self.index = index
+        self.name = self.index.name
+        self.parent = parent
         self.children = []
-        self.parent = None
+        self.isVisible = False
+        if self.index.type == IndexType.DIR:
+            self.isVisible = True
 
-    def getIndex(self):
-        return self.val.getIndex()
+    def appendChild(self, child):
+        self.children.append(child)
 
-    def getChildren(self):
-        return self.children
+    def childAtRow(self, row):
+        if row < 0 or row >= len(self.children):
+            return None
+        return self.children[row]
 
-    def extendchild(self, child):
-        self.children.extend(child)
-        child.parent = self
+    def childCount(self):
+        return sum(child.isVisible for child in self.children)  # 只返回可见子节点的数量
 
-    def removeChild(self, child):
-        self.children.remove(child)
+    def rowOfChild(self, child):
+        if not child.isVisible:
+            return -1  # 如果子节点不可见，则返回-1
+        return self.children.index(child)
 
-    def getType(self) -> IndexType:
-        return self.val.getType()
+    def getParent(self):
+        return self.parent
+
+    def hasChildName(self, name: str):
+        for child in self.children:
+            if child.name == name:
+                return True
+        return False
+
+    def getChildByName(self, name: str):
+        for child in self.children:
+            if child.name == name:
+                return child
+        return None
 
     def getPath(self):
-        path = []
-        node = self
-        path = node.val.getName()
-        while node.parent:
-            node = node.parent
-            path = node.val.getName() + "\\" + path
-        return path
+        # 如果当前节点是根节点，直接返回根节点的名称
+        if self.parent is None:
+            return self.name
+
+        # 递归获取父节点的路径，并将当前节点的名称添加到路径中
+        parent_path = self.parent.getPath()
+        return parent_path + "\\" + self.name
 
 
-def indexTreeSerialize(root: IndexTreeNode) -> str:
-    if not root:
+class MyModel(QAbstractItemModel):
+    def __init__(self, root, parent=None):
+        super().__init__(parent)
+        self.rootNode = root
+
+    def headerData(self, section, orientation, role):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+        ):
+            return "磁盘根目录：.\\"
+        return super().headerData(section, orientation, role)
+
+    def columnCount(self, parent):
+        return 1
+
+    def data(self, index, role):
+        if not index.isValid():
+            return None
+        node = index.internalPointer()
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            return node.name
+
         return None
-    data = {"val": root.val.__dict__, "children": [], "parent": root.parent}
-    for child in root.children:
-        data["children"].append(indexTreeSerialize(child))
-    return json.dumps(data)
 
+    def flags(self, index):
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
-def indexTreeDeserialize(data) -> IndexTreeNode:
-    if not data:
-        return None
-    data = json.loads(data)
-    root = IndexTreeNode(Index(**data["val"]), parent=data["parent"])
-    for child in data["children"]:
-        root.children.append(indexTreeDeserialize(child))
-    return root
+    def index(self, row, column, parent=QModelIndex()):
+        if not self.hasIndex(row, column, parent):
+            return QModelIndex()
+        parentNode = parent.internalPointer() if parent.isValid() else self.rootNode
+
+        # 遍历可见子节点来寻找第row个可见子节点
+        visibleRow = -1
+        for childNode in parentNode.children:
+            if not childNode.isVisible:
+                continue  # 如果该子节点不可见，则跳过
+            visibleRow += 1
+            if visibleRow == row:
+                return self.createIndex(row, column, childNode)
+        return QModelIndex()
+
+    def parent(self, index):
+        if not index.isValid():
+            return QModelIndex()
+        childNode = index.internalPointer()
+        parentNode = childNode.parent
+        if parentNode == self.rootNode:
+            return QModelIndex()
+        return self.createIndex(parentNode.rowOfChild(childNode), 0, parentNode)
+
+    def rowCount(self, parent):
+        parentNode = parent.internalPointer() if parent.isValid() else self.rootNode
+        return sum(child.isVisible for child in parentNode.children)  # 只算可见子节点的数量

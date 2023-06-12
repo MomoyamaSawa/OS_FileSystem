@@ -12,6 +12,6 @@ COLOR_VISIBILITY = 64
 RADIUS = 20.0
 RESOURCE = {
     "file": "./resource/file.svg",
-    "floder": "./resource/floder.svg",
+    "floder": "./resource/folder.svg",
 }
 FONT_SIZE = 18

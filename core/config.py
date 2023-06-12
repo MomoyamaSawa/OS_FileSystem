@@ -1,5 +1,8 @@
 BLOCK_SIZE = 512
-BLOCK_NUM = 50
+BLOCK_NUM = 48
+BACK_NUM = 8
+INT_NUM = 4
+EOF = b"\xff\xff\xff\xff"
 MEM_FILE = "mem.data"
 
 

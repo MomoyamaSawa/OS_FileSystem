@@ -1,34 +1,73 @@
-from PyQt6.QtCore import *
-from PyQt6.QtGui import *
-from PyQt6.QtWidgets import *
+# coding:utf-8
 import sys
-from PyQt6.QtWidgets import QWidget
-from qfluentwidgets import *
-from setting import *
-from qfluentwidgets import FluentIcon as FIF
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QWidget, QHBoxLayout, QCompleter
+
+from qfluentwidgets import LineEdit, PushButton, SearchLineEdit
 
 
-# 创建主窗口并设置垂直布局
-mainWindow = QMainWindow()
-vLayout = QVBoxLayout(mainWindow.centralWidget())
-mainWindow.centralWidget().setLayout(vLayout)
+class Demo(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.hBoxLayout = QHBoxLayout(self)
+        self.lineEdit = SearchLineEdit(self)
+        self.button = PushButton("Search", self)
 
-# 创建一个 QWidget 作为容器，并将其设置为水平布局
-container = QWidget()
-hLayout = QHBoxLayout(container)
-container.setLayout(hLayout)
+        # add completer
+        stands = [
+            "Star Platinum",
+            "Hierophant Green",
+            "Made in Haven",
+            "King Crimson",
+            "Silver Chariot",
+            "Crazy diamond",
+            "Metallica",
+            "Another One Bites The Dust",
+            "Heaven's Door",
+            "Killer Queen",
+            "The Grateful Dead",
+            "Stone Free",
+            "The World",
+            "Sticky Fingers",
+            "Ozone Baby",
+            "Love Love Deluxe",
+            "Hermit Purple",
+            "Gold Experience",
+            "King Nothing",
+            "Paper Moon King",
+            "Scary Monster",
+            "Mandom",
+            "20th Century Boy",
+            "Tusk Act 4",
+            "Ball Breaker",
+            "Sex Pistols",
+            "D4C • Love Train",
+            "Born This Way",
+            "SOFT & WET",
+            "Paisley Park",
+            "Wonder of U",
+            "Walking Heart",
+            "Cream Starter",
+            "November Rain",
+            "Smooth Operators",
+            "The Matte Kudasai",
+        ]
+        self.completer = QCompleter(stands, self.lineEdit)
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.lineEdit.setCompleter(self.completer)
 
-# 添加子部件到水平布局中
-childWidget1 = QLabel("Hello")
-childWidget2 = QPushButton("World")
-hLayout.addWidget(childWidget1)
-hLayout.addWidget(childWidget2)
+        self.resize(400, 400)
+        self.hBoxLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hBoxLayout.addWidget(self.lineEdit, 0, Qt.AlignmentFlag.AlignCenter)
+        self.hBoxLayout.addWidget(self.button, 0, Qt.AlignmentFlag.AlignCenter)
 
-# 将容器添加到主窗口的垂直布局中
-vLayout.addWidget(container)
+        self.lineEdit.setFixedSize(200, 33)
+        self.lineEdit.setClearButtonEnabled(True)
+        self.lineEdit.setPlaceholderText("Search stand")
 
-# 将容器的大小策略设置为 QSizePolicy::Preferred
-container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
-# 重新计算容器的最佳大小
-container.adjustSize()
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = Demo()
+    w.show()
+    app.exec()
