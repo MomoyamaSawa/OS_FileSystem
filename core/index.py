@@ -18,8 +18,7 @@ class Index:
     目录索引项
     """
 
-    def __init__(self, name: str, index: int, type: IndexType):
-        self.index = index
+    def __init__(self, name: str, type: IndexType):
         self.name = name
         self.type = type
         self.modifyTime = None
@@ -39,6 +38,7 @@ class MyNode:
 
     def appendChild(self, child):
         self.children.append(child)
+        child.parent = self
 
     def childAtRow(self, row):
         if row < 0 or row >= len(self.children):
@@ -77,11 +77,15 @@ class MyNode:
         parent_path = self.parent.getPath()
         return parent_path + "\\" + self.name
 
+    def changeName(self, name: str):
+        self.name = name
+        self.index.name = name
+
 
 class MyModel(QAbstractItemModel):
     def __init__(self, root, parent=None):
         super().__init__(parent)
-        self.rootNode = root
+        self.rootNode: MyNode = root
 
     def headerData(self, section, orientation, role):
         if (
@@ -134,3 +138,10 @@ class MyModel(QAbstractItemModel):
     def rowCount(self, parent):
         parentNode = parent.internalPointer() if parent.isValid() else self.rootNode
         return sum(child.isVisible for child in parentNode.children)  # 只算可见子节点的数量
+
+    def itemFromIndex(self, index):
+        if index.isValid():
+            item = index.internalPointer()
+            if isinstance(item, MyNode):
+                return item
+        return None

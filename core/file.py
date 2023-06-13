@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import *
 from tool import *
 
 
-class File(MyMessageDialog):
+class File(MyMessageBox):
     """
     文件本体
     """

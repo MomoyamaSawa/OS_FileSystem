@@ -2,6 +2,8 @@ from qfluentwidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
+from setting import *
+from core.index import *
 
 
 class MaskDialogBase(QDialog):
@@ -83,62 +85,143 @@ class MaskDialogBase(QDialog):
         return super().eventFilter(obj, e)
 
 
-class MyMessageDialog(MaskDialogBase):
+class Ui_MessageBox:
+    """Ui of message box"""
+
     yesSignal = pyqtSignal()
     cancelSignal = pyqtSignal()
 
-    def __init__(self, title: str, content: str, parent):
-        super().__init__(parent=parent)
+    def _setUpUi(self, title, content, parent):
         self.content = content
-        self.titleLabel = QLabel(title, self.widget)
-        self.contentLabel = TextEdit(self.widget)
-        self.contentLabel.setMarkdown(content)
-        self.yesButton = QPushButton(self.tr("OK"), self.widget)
-        self.cancelButton = QPushButton(self.tr("Cancel"), self.widget)
+        self.titleLabel = QLabel(title, parent)
+        self.contentLabel = TextEdit(parent)
+        self.contentLabel.setWordWrapMode(
+            QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+        )
+        self.contentLabel.setAcceptRichText(True)
+        self.contentLabel.setPlainText(content)
+        self.contentLabel.setFixedSize(FILE_SIZE[0], FILE_SIZE[1])
+
+        self.buttonGroup = QFrame(parent)
+        self.yesButton = PrimaryPushButton(self.tr("OK"), self.buttonGroup)
+        self.cancelButton = QPushButton(self.tr("Cancel"), self.buttonGroup)
+
+        self.vBoxLayout = QVBoxLayout(parent)
+        self.textLayout = QVBoxLayout()
+        self.buttonLayout = QHBoxLayout(self.buttonGroup)
+
         self.__initWidget()
 
     def __initWidget(self):
-        """initialize widgets"""
-        self.windowMask.resize(self.size())
-        self.widget.setMaximumWidth(540)
-        self.titleLabel.move(24, 24)
-        self.contentLabel.move(24, 56)
-        self.contentLabel.setText(TextWrap.wrap(self.content, 71)[0])
-
         self.__setQss()
         self.__initLayout()
 
-        # connect signal to slot
+        # fixes https://github.com/zhiyiYo/PyQt-Fluent-Widgets/issues/19
+        self.yesButton.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
+        self.cancelButton.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
+
+        self.yesButton.setFocus()
+        self.buttonGroup.setFixedHeight(81)
+
+        # self._adjustText()
+
         self.yesButton.clicked.connect(self.__onYesButtonClicked)
         self.cancelButton.clicked.connect(self.__onCancelButtonClicked)
 
+    def _adjustText(self):
+        if self.isWindow():
+            if self.parent():
+                w = max(self.titleLabel.width(), self.parent().width())
+                chars = max(min(w / 9, 140), 30)
+            else:
+                chars = 100
+        else:
+            w = max(self.titleLabel.width(), self.window().width())
+            chars = max(min(w / 9, 100), 30)
+
+        self.contentLabel.setText(TextWrap.wrap(self.content, chars, True)[0])
+
     def __initLayout(self):
-        """initialize layout"""
-        self.contentLabel.adjustSize()
-        self.widget.setFixedSize(
-            48 + self.contentLabel.width(),
-            self.contentLabel.y() + self.contentLabel.height() + 92,
-        )
-        self.yesButton.resize((self.widget.width() - 54) // 2, 32)
-        self.cancelButton.resize(self.yesButton.width(), 32)
-        self.yesButton.move(24, self.widget.height() - 56)
-        self.cancelButton.move(
-            self.widget.width() - 24 - self.cancelButton.width(),
-            self.widget.height() - 56,
-        )
+        self.vBoxLayout.setSpacing(0)
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
+        self.vBoxLayout.addLayout(self.textLayout, 1)
+        self.vBoxLayout.addWidget(self.buttonGroup, 0, Qt.AlignmentFlag.AlignBottom)
+        self.vBoxLayout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
+
+        self.textLayout.setSpacing(12)
+        self.textLayout.setContentsMargins(24, 24, 24, 24)
+        self.textLayout.addWidget(self.titleLabel, 0, Qt.AlignmentFlag.AlignTop)
+        self.textLayout.addWidget(self.contentLabel, 0, Qt.AlignmentFlag.AlignTop)
+
+        self.buttonLayout.setSpacing(12)
+        self.buttonLayout.setContentsMargins(24, 24, 24, 24)
+        self.buttonLayout.addWidget(self.yesButton, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.buttonLayout.addWidget(self.cancelButton, 1, Qt.AlignmentFlag.AlignVCenter)
 
     def __onCancelButtonClicked(self):
-        self.cancelSignal.emit()
         self.reject()
+        self.cancelSignal.emit()
 
     def __onYesButtonClicked(self):
-        self.setEnabled(False)
-        self.yesSignal.emit()
         self.accept()
+        self.yesSignal.emit()
 
     def __setQss(self):
-        """set style sheet"""
-        self.windowMask.setObjectName("windowMask")
         self.titleLabel.setObjectName("titleLabel")
         self.contentLabel.setObjectName("contentLabel")
-        FluentStyleSheet.MESSAGE_DIALOG.apply(self)
+        self.buttonGroup.setObjectName("buttonGroup")
+        self.cancelButton.setObjectName("cancelButton")
+
+        FluentStyleSheet.DIALOG.apply(self)
+
+        self.yesButton.adjustSize()
+        self.cancelButton.adjustSize()
+
+
+class MyMessageBox(MaskDialogBase, Ui_MessageBox):
+    """Message box"""
+
+    yesSignal = pyqtSignal()
+    cancelSignal = pyqtSignal()
+
+    def __init__(self, title: str, content: str, parent=None):
+        super().__init__(parent=parent)
+        self._setUpUi(title, content, self.widget)
+
+        self.setShadowEffect(60, (0, 10), QColor(0, 0, 0, 50))
+        self.setMaskColor(QColor(0, 0, 0, 76))
+        self._hBoxLayout.removeWidget(self.widget)
+        self._hBoxLayout.addWidget(self.widget, 1, Qt.AlignmentFlag.AlignCenter)
+
+        self.buttonGroup.setMinimumWidth(280)
+        self.widget.setFixedSize(
+            max(self.contentLabel.width(), self.titleLabel.width()) + 48,
+            self.contentLabel.y() + self.contentLabel.height() + 105,
+        )
+
+    def eventFilter(self, obj, e: QEvent):
+        if obj is self.window():
+            if e.type() == QEvent.Type.Resize:
+                self._adjustText()
+
+        return super().eventFilter(obj, e)
+
+
+class RoundWidget(QWidget):
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(
+            NORMAL_COLOR_RGBA1_[0],
+            NORMAL_COLOR_RGBA1_[1],
+            NORMAL_COLOR_RGBA1_[2],
+            NORMAL_COLOR_RGBA1_[3],
+        )
+        color.setAlpha(64)
+        painter.setBrush(color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(self.rect(), 20, 20)
+
+
+def myGetPath(node: MyNode):
+    return "📄：" + node.getPath() + "  （当前路径）"

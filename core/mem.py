@@ -1,5 +1,5 @@
 from .config import *
-import os, struct, sys
+import os, pickle
 from bitarray import *
 from PyQt6.QtCore import *
 from .index import *
@@ -18,16 +18,16 @@ class Memeory(QObject):
     ) -> None:
         self.config = config
         self.size = self.config.BLOCK_SIZE * self.config.BLOCK_NUM
-        self.memory = []
-        self.bitmap: list[bitarray] = []
-        # 假设第0块是存各种信息的索引块吧，然后位视图从第1块开始，索引从第2块开始
+        self.memory: list[bytearray] = []
+        self.bitmap: bitarray = []
+        # 假设第0块是存各种信息的索引块吧，然后位视图从第0块开始，索引从第1块开始
         self.infoMap = {
             "bitmap": 0,
             "index": 1,
         }
         self.occupyBlock = 0
         if isFile:
-            pass
+            self._createFromFile()
         else:
             self._creatNewMem()
 
@@ -39,10 +39,21 @@ class Memeory(QObject):
         # INFO 位视图是固定大小所以直接写入了，还有个索引是可大可小的，直接写入后面添加不方便，所以交给管理器管了！
         self.bitmap = bitarray(self.config.BLOCK_NUM)
         self.bitmap.setall(False)
-        self.bitmap[0] = True
+        self.bitmap[self.infoMap["bitmap"]] = True
         self.inMem(bytearray(self.bitmap.tobytes()), self.infoMap["bitmap"])
         # 占位
         self.inMem(bytearray(0), self.infoMap["index"])
+
+    def _createFromFile(self):
+        # 从文件中读取二进制数据
+        with open(MEM_FILE, "rb") as file:
+            binary_data = file.read()
+        # 将二进制数据反序列化为 Python 对象
+        self.memory = pickle.loads(binary_data)
+
+        bitmapData = self.getData(self.infoMap["bitmap"])
+        bits = "".join(format(byte, "08b") for byte in bitmapData)
+        self.bitmap = bitarray(bits)
 
     def inMem(self, data: bytearray, blockNo: int = None) -> int:
         # 分解
@@ -145,6 +156,13 @@ class Memeory(QObject):
             )
         return data
 
+    def save(self):
+        # 将 self.memory 序列化成二进制格式
+        serialized_data = pickle.dumps(self.memory)
+        # 将二进制数据写入文件中
+        with open(MEM_FILE, "wb") as file:
+            file.write(serialized_data)
+
 
 class MemController(QObject):
     """
@@ -152,25 +170,28 @@ class MemController(QObject):
     """
 
     noEnoughSignal = pyqtSignal()
-    addDirSignal = pyqtSignal(str)
 
     def __init__(self, config: Config) -> None:
+        super().__init__()
         self.config = config
-        self.index = None
         self.root = None
-        self.indexs: list[Index] = []
-        self.indexNum = 0
-        self.indexSize1 = 0
-        self.indexSize2 = 0
+
+        self.nowBlockNum = 1
         # 获取内存
         if os.path.exists(config.MEM_FILE):
             self.mem = Memeory(self.config, True)
+            indexData = self.mem.getData(self.mem.infoMap["index"])
+            self.root = pickle.loads(bytes(indexData))
+            self.checkIndexSize()
         else:
-            self.mem = Memeory(self.config, False)
-            self.addIndex(None, ".", IndexType.DIR)
+            self.reset()
 
-        # 读取内存中的位图
-        # 读取内存中的索引表
+    def getBitMap(self) -> list[str]:
+        # 将 bitarray 转换为字符串
+        bitmap_str = self.mem.bitmap.to01()
+        # 将字符串按照 8 个字符一组进行分割
+        bitmap_list = [bitmap_str[i : i + 8] for i in range(0, len(bitmap_str), 8)]
+        return bitmap_list
 
     def getRoot(self) -> MyNode:
         return self.root
@@ -183,13 +204,10 @@ class MemController(QObject):
             if not ini.hasChildName(name):
                 break
             i += 1
-        index = Index(name, self.indexNum, IndexType.FILE)
-        self.indexs.append(index)
+        index = Index(name, IndexType.FILE)
+
         node = MyNode(index, ini)
-        self.indexNum += 1
         if not self.checkIndexSize():
-            self.indexs.pop()
-            self.indexNum -= 1
             self.noEnoughSignal.emit()
             return None
         else:
@@ -203,24 +221,21 @@ class MemController(QObject):
         name = None
         if name0 == None:
             if type == IndexType.FILE:
-                name = "新建文件"
+                name = "file"
             elif type == IndexType.DIR:
-                name = "新建文件夹"
+                name = "dir"
             name0 = name
-        i = 1
+        i = 0
         name = name0
-        while True and ini:
-            name = name0 if i == 1 else f"{name0}{i}"
+        while ini:
+            name = name0 if i == 0 else f"{name0}{i}"
             if not ini.hasChildName(name):
                 break
             i += 1
-        index = Index(name, self.indexNum, type)
-        self.indexs.append(index)
+        index = Index(name, type)
+
         node = MyNode(index, ini)
-        self.indexNum += 1
         if not self.checkIndexSize():
-            self.indexs.pop()
-            self.indexNum -= 1
             self.noEnoughSignal.emit()
             return None
         else:
@@ -230,10 +245,21 @@ class MemController(QObject):
                 self.root = node
             return name
 
+    def chackName(self, ini: MyNode, name0: str) -> str:
+        name = None
+        i = 0
+        name = name0
+        while ini:
+            name = name0 if i == 0 else f"{name0}{i}"
+            if not ini.hasChildName(name):
+                break
+            i += 1
+        return name
+
     def deleteNode(self, faNode: MyNode, node: MyNode) -> None:
         if node in faNode.children:
             faNode.children.remove(node)
-            self.indexs.remove(node.index)
+
             if node.index.type == IndexType.DIR:
                 pass
                 for child in node.children:
@@ -242,7 +268,11 @@ class MemController(QObject):
                 self.mem.deleteMem(node.index.blockNo)
 
     def checkIndexSize(self) -> bool:
-        if self.mem.checkMemBlock(1):
+        blockNum = self.mem.getBlockNum(bytearray(pickle.dumps(self.root)))
+        num = 0
+        if self.nowBlockNum != blockNum:
+            num = blockNum - self.nowBlockNum
+        if self.mem.occupy(num):
             return True
         else:
             return False
@@ -267,12 +297,19 @@ class MemController(QObject):
         index.modifyTime = time
         return True
 
-    def indexIn(self):
-        self.mem.cancelOccupy(self.indexSize1 + self.indexSize2)
-        if not self.mem.inMem(
-            bytearray(indexTreeSerialize(self.index).encode("utf-8"))
-        ):
-            self.noEnoughSignal.emit()
-
     def getModel(self) -> MyModel:
         return MyModel(self.root)
+
+    def reset(self):
+        self.mem = Memeory(self.config, False)
+        self.addIndex(None, ".", IndexType.DIR)
+
+    def saveAll(self):
+        self.mem.inMem(bytearray(self.mem.bitmap.tobytes()), self.mem.infoMap["bitmap"])
+        self.mem.inMem(bytearray(pickle.dumps(self.root)), self.mem.infoMap["index"])
+        self.mem.save()
+
+    def copyFile(self, node: MyNode):
+        data = self.mem.getData(node.index.blockNo)
+        bliockNum = self.mem.inMem(data)
+        node.index.blockNo = bliockNum
