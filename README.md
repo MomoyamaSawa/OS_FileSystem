@@ -8,7 +8,7 @@
 
 # 项目功能 & 实现介绍
 
-![Untitled](./9db22c56-a3fa-41ab-bb90-ac985be76094_Export-b00a0a71-f00d-45c7-b47b-2a2efed3f6ab/文件管理系统REPORT 1dfaf8e1ab3f44a7bd0ac198fa9d56f8/Untitled.png)
+![Untitled](./README.assets/Untitled.png)
 
 - 在内存中开辟一个空间作为文件存储器，在其上实现一个简单的文件系统，其中块大小设置为512字节，一共有48个块
 - 退出这个文件系统时，该文件系统的内容可以保存到磁盘上，下次可以将其回复到内存中来。
